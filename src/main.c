@@ -89,6 +89,8 @@ void app_main(void)
         int  song_index = 0;
         bool playing    = false;
         bool prev_left = false, prev_mid = false, prev_right = false;
+        TickType_t play_start_time = 0;
+        const TickType_t max_play_time = pdMS_TO_TICKS(30000); // 30 second timeout
 
         ESP_LOGI(TAG, "Conductor ready. A=STOP, B=Start/Stop, C=Next song");
 
@@ -113,9 +115,19 @@ void app_main(void)
             if (mid && !prev_mid) {
                 if (!playing) {
                     ESP_LOGI(TAG, "Broadcast START, song=%d", song_index);
+
+                    // IMPORTANT: Update conductor's display animations here
+                    // The orchestra module's button handlers are not used since main.c
+                    // implements its own button polling loop for the conductor
+                    if (song_index < total_songs) {
+                        const song_t *song = &songs[song_index];
+                        display_animations_start_playback(song->type);
+                        display_animations_set_song_name(song->name);
+                    }
+
                     espnow_broadcast(MSG_SYNC_START, (uint8_t)song_index);
                     playing = true;
-                    // performers will show EQ; conductor stays in idle blue
+                    play_start_time = xTaskGetTickCount();  // Record start time
                 } else {
                     ESP_LOGI(TAG, "Broadcast STOP");
                     espnow_broadcast(MSG_SYNC_STOP, 0);
@@ -133,7 +145,27 @@ void app_main(void)
                     espnow_broadcast(MSG_SYNC_STOP, 0);
                     vTaskDelay(pdMS_TO_TICKS(30));
                     ESP_LOGI(TAG, "Broadcast START, song=%d", song_index);
+
+                    // Update conductor's display for new song
+                    if (song_index < total_songs) {
+                        const song_t *song = &songs[song_index];
+                        display_animations_start_playback(song->type);
+                        display_animations_set_song_name(song->name);
+                    }
+
                     espnow_broadcast(MSG_SYNC_START, (uint8_t)song_index);
+                    play_start_time = xTaskGetTickCount();  // Reset timer for new song
+                }
+            }
+
+            // Check for auto-stop after timeout
+            if (playing) {
+                TickType_t elapsed = xTaskGetTickCount() - play_start_time;
+                if (elapsed >= max_play_time) {
+                    ESP_LOGI(TAG, "Auto-stop: song timeout reached");
+                    espnow_broadcast(MSG_SYNC_STOP, 0);
+                    playing = false;
+                    display_animations_start_idle();
                 }
             }
 

@@ -106,8 +106,10 @@ static void espnow_task(void *pvParameters)
             switch (msg.type) {
             case MSG_SYNC_START:
                 if (role == ROLE_CONDUCTOR) {
-                    // Conductor stays silent; UI only if desired.
-                    ESP_LOGI(TAG, "Conductor: START received (no local audio)");
+                    // Conductor needs to call orchestra_play_song to handle visuals
+                    // (even though it usually doesn't play audio)
+                    ESP_LOGI(TAG, "Conductor: START received, updating visuals");
+                    orchestra_play_song(msg.song_id);
                 } else {
                     // Performers schedule playback to conductor timestamp (msg.timestamp is microseconds)
                     int64_t local_now_us = esp_timer_get_time();
@@ -129,7 +131,8 @@ static void espnow_task(void *pvParameters)
 
             case MSG_SYNC_STOP:
                 if (role == ROLE_CONDUCTOR) {
-                    ESP_LOGI(TAG, "Conductor: STOP received (no local audio)");
+                    ESP_LOGI(TAG, "Conductor: STOP received, stopping visuals");
+                    orchestra_stop();  // Stop visuals even though conductor has no audio
                 } else {
                     ESP_LOGI(TAG, "Performer: STOP");
                     orchestra_stop();

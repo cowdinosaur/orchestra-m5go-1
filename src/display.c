@@ -236,7 +236,13 @@ void display_push_framebuffer(const uint16_t *fb, uint16_t w, uint16_t h) {
 esp_err_t display_init(void) {
     display_init_hardware();
 
-    // Start the lightweight animations task and go to idle (blue)
+    // Paint a single blue frame first before starting animations
+    lcd_fill_rect(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT, rgb565(0,0,200));
+
+    // Small delay to ensure the blue frame is completely sent
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    // Now start the lightweight animations task and go to idle
     esp_err_t ret = display_animations_init();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to init display animations: %s", esp_err_to_name(ret));
@@ -248,9 +254,6 @@ esp_err_t display_init(void) {
     // Optionally cycle modes (debug only)
     // lcd_cycle_color_modes();
 #endif
-
-    // Paint a single blue frame immediately so something shows before the task runs
-    lcd_fill_rect(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT, rgb565(0,0,200));
 
     ESP_LOGI(TAG, "Display system initialized");
     return ESP_OK;

@@ -33,7 +33,21 @@ The Orchestra M5GO features dynamic visual animations that enhance the musical e
 
 ### 2. Playback Animation (During Music)
 
-**Current Implementation:**
+**Current Implementation varies by device role:**
+
+#### **Conductor Device - Scrolling Song Title**
+- **Rainbow scrolling text** displaying the current song name
+- Text features:
+  - 3x scaled 5x7 bitmap font (21 pixels tall)
+  - Horizontally scrolling from right to left
+  - Rainbow gradient colors that shift dynamically
+  - Centered vertically on screen
+  - Pure black background
+  - Smooth scrolling at 2 pixels per frame
+- Provides clear visual indication of what's playing
+- Conductor acts as the "display board" for the orchestra
+
+#### **Performer Devices (Parts 1-4) - Dynamic Equalizer**
 - **Dynamic Rainbow Equalizer**
   - 12 vertical bars with organic movement
   - **Color Scheme:**

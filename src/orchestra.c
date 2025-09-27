@@ -88,16 +88,25 @@ static void handle_button_press(uint8_t button_id) {
         return;
     }
 
-    // Broadcast to all devices
+    // Immediately update conductor's visuals (don't wait for broadcast echo)
+    const song_t *song = &songs[song_id];
+    display_animations_start_playback(song->type);
+    display_animations_set_song_name(song->name);
+
+    // Broadcast to all devices (including self)
     esp_err_t err = espnow_broadcast(MSG_SYNC_START, song_id);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to broadcast song start: %s", esp_err_to_name(err));
         return;
     }
 
-    // Update local visuals
-    const song_t *song = &songs[song_id];
-    display_animations_start_playback(song->type);
+    // The conductor will also receive its own broadcast and call orchestra_play_song()
+    // for proper state management
+
+    // Mark conductor as playing (for visual state)
+    xSemaphoreTake(orchestra_mutex, portMAX_DELAY);
+    is_playing = true;
+    xSemaphoreGive(orchestra_mutex);
 }
 
 static void button_task(void *pvParameters) {
@@ -223,6 +232,8 @@ esp_err_t orchestra_play_song(uint8_t song_id) {
 
     rgb_set_all_color(led_color);
     display_animations_start_playback(song->type);
+    // Set song name for scrolling text (conductor will display it)
+    display_animations_set_song_name(song->name);
     // Ensure animations know our role so they pick the right colors
     display_animations_update_beat(0.0f);
 

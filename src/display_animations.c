@@ -2,6 +2,7 @@
 // Minimal, low-RAM display animations with role-colored equalizer
 #include <string.h>
 #include <math.h>
+#include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -28,6 +29,7 @@ static const char *TAG = "DISPLAY_ANIM";
 // Minimal animation context
 static animation_context_t anim_ctx;
 static SemaphoreHandle_t anim_mutex = NULL;
+static char current_song_name[64] = "Orchestra M5GO";  // Default text
 
 // One scanline buffer reused for pushes
 static uint16_t scanline_buf[DISPLAY_WIDTH];
@@ -132,7 +134,174 @@ static void render_equalizer_frame(uint32_t frame)
     display_end_frame();
 }
 
-// Removed unused draw_char_at function - character drawing is now inline in render_network_status
+// Simple 5x7 font for scrolling text (basic ASCII characters)
+// Each byte represents one column of the character (5 columns per char)
+static const uint8_t font_5x7[][5] = {
+    [' ' - 32] = {0x00, 0x00, 0x00, 0x00, 0x00},  // Space
+    ['!' - 32] = {0x00, 0x00, 0x5F, 0x00, 0x00},  // !
+    ['"' - 32] = {0x00, 0x07, 0x00, 0x07, 0x00},  // "
+    ['#' - 32] = {0x14, 0x7F, 0x14, 0x7F, 0x14},  // #
+    ['(' - 32] = {0x00, 0x1C, 0x22, 0x41, 0x00},  // (
+    [')' - 32] = {0x00, 0x41, 0x22, 0x1C, 0x00},  // )
+    ['-' - 32] = {0x08, 0x08, 0x08, 0x08, 0x08},  // -
+    ['.' - 32] = {0x00, 0x60, 0x60, 0x00, 0x00},  // .
+    ['0' - 32] = {0x3E, 0x51, 0x49, 0x45, 0x3E},  // 0
+    ['1' - 32] = {0x00, 0x42, 0x7F, 0x40, 0x00},  // 1
+    ['2' - 32] = {0x42, 0x61, 0x51, 0x49, 0x46},  // 2
+    ['3' - 32] = {0x21, 0x41, 0x45, 0x4B, 0x31},  // 3
+    ['4' - 32] = {0x18, 0x14, 0x12, 0x7F, 0x10},  // 4
+    ['5' - 32] = {0x27, 0x45, 0x45, 0x45, 0x39},  // 5
+    ['6' - 32] = {0x3C, 0x4A, 0x49, 0x49, 0x30},  // 6
+    ['7' - 32] = {0x01, 0x71, 0x09, 0x05, 0x03},  // 7
+    ['8' - 32] = {0x36, 0x49, 0x49, 0x49, 0x36},  // 8
+    ['9' - 32] = {0x06, 0x49, 0x49, 0x29, 0x1E},  // 9
+    ['A' - 32] = {0x7E, 0x11, 0x11, 0x11, 0x7E},  // A
+    ['B' - 32] = {0x7F, 0x49, 0x49, 0x49, 0x36},  // B
+    ['C' - 32] = {0x3E, 0x41, 0x41, 0x41, 0x22},  // C
+    ['D' - 32] = {0x7F, 0x41, 0x41, 0x22, 0x1C},  // D
+    ['E' - 32] = {0x7F, 0x49, 0x49, 0x49, 0x41},  // E
+    ['F' - 32] = {0x7F, 0x09, 0x09, 0x09, 0x01},  // F
+    ['G' - 32] = {0x3E, 0x41, 0x49, 0x49, 0x7A},  // G
+    ['H' - 32] = {0x7F, 0x08, 0x08, 0x08, 0x7F},  // H
+    ['I' - 32] = {0x00, 0x41, 0x7F, 0x41, 0x00},  // I
+    ['J' - 32] = {0x20, 0x40, 0x41, 0x3F, 0x01},  // J
+    ['K' - 32] = {0x7F, 0x08, 0x14, 0x22, 0x41},  // K
+    ['L' - 32] = {0x7F, 0x40, 0x40, 0x40, 0x40},  // L
+    ['M' - 32] = {0x7F, 0x02, 0x0C, 0x02, 0x7F},  // M
+    ['N' - 32] = {0x7F, 0x04, 0x08, 0x10, 0x7F},  // N
+    ['O' - 32] = {0x3E, 0x41, 0x41, 0x41, 0x3E},  // O
+    ['P' - 32] = {0x7F, 0x09, 0x09, 0x09, 0x06},  // P
+    ['Q' - 32] = {0x3E, 0x41, 0x51, 0x21, 0x5E},  // Q
+    ['R' - 32] = {0x7F, 0x09, 0x19, 0x29, 0x46},  // R
+    ['S' - 32] = {0x46, 0x49, 0x49, 0x49, 0x31},  // S
+    ['T' - 32] = {0x01, 0x01, 0x7F, 0x01, 0x01},  // T
+    ['U' - 32] = {0x3F, 0x40, 0x40, 0x40, 0x3F},  // U
+    ['V' - 32] = {0x1F, 0x20, 0x40, 0x20, 0x1F},  // V
+    ['W' - 32] = {0x3F, 0x40, 0x38, 0x40, 0x3F},  // W
+    ['X' - 32] = {0x63, 0x14, 0x08, 0x14, 0x63},  // X
+    ['Y' - 32] = {0x07, 0x08, 0x70, 0x08, 0x07},  // Y
+    ['Z' - 32] = {0x61, 0x51, 0x49, 0x45, 0x43},  // Z
+    ['a' - 32] = {0x20, 0x54, 0x54, 0x54, 0x78},  // a
+    ['b' - 32] = {0x7F, 0x48, 0x44, 0x44, 0x38},  // b
+    ['c' - 32] = {0x38, 0x44, 0x44, 0x44, 0x20},  // c
+    ['d' - 32] = {0x38, 0x44, 0x44, 0x48, 0x7F},  // d
+    ['e' - 32] = {0x38, 0x54, 0x54, 0x54, 0x18},  // e
+    ['f' - 32] = {0x08, 0x7E, 0x09, 0x01, 0x02},  // f
+    ['g' - 32] = {0x0C, 0x52, 0x52, 0x52, 0x3E},  // g
+    ['h' - 32] = {0x7F, 0x08, 0x04, 0x04, 0x78},  // h
+    ['i' - 32] = {0x00, 0x44, 0x7D, 0x40, 0x00},  // i
+    ['j' - 32] = {0x20, 0x40, 0x44, 0x3D, 0x00},  // j
+    ['k' - 32] = {0x7F, 0x10, 0x28, 0x44, 0x00},  // k
+    ['l' - 32] = {0x00, 0x41, 0x7F, 0x40, 0x00},  // l
+    ['m' - 32] = {0x7C, 0x04, 0x18, 0x04, 0x78},  // m
+    ['n' - 32] = {0x7C, 0x08, 0x04, 0x04, 0x78},  // n
+    ['o' - 32] = {0x38, 0x44, 0x44, 0x44, 0x38},  // o
+    ['p' - 32] = {0x7C, 0x14, 0x14, 0x14, 0x08},  // p
+    ['q' - 32] = {0x08, 0x14, 0x14, 0x18, 0x7C},  // q
+    ['r' - 32] = {0x7C, 0x08, 0x04, 0x04, 0x08},  // r
+    ['s' - 32] = {0x48, 0x54, 0x54, 0x54, 0x20},  // s
+    ['t' - 32] = {0x04, 0x3F, 0x44, 0x40, 0x20},  // t
+    ['u' - 32] = {0x3C, 0x40, 0x40, 0x20, 0x7C},  // u
+    ['v' - 32] = {0x1C, 0x20, 0x40, 0x20, 0x1C},  // v
+    ['w' - 32] = {0x3C, 0x40, 0x30, 0x40, 0x3C},  // w
+    ['x' - 32] = {0x44, 0x28, 0x10, 0x28, 0x44},  // x
+    ['y' - 32] = {0x0C, 0x50, 0x50, 0x50, 0x3C},  // y
+    ['z' - 32] = {0x44, 0x64, 0x54, 0x4C, 0x44},  // z
+};
+
+// Render scrolling text for conductor during playback
+static void render_scrolling_text(uint32_t frame, const char* text)
+{
+    display_begin_frame(DISPLAY_WIDTH, DISPLAY_HEIGHT);
+
+    // Text parameters
+    int scale = 3;  // Scale factor for the font (3x = 21 pixels tall)
+    int char_width = 6 * scale;  // 5 pixels + 1 space, scaled
+    int char_height = 7 * scale;
+
+    // Calculate text width
+    int text_len = strlen(text);
+    int text_width = text_len * char_width;
+
+    // Three different Y positions for the three text lines
+    int text_y_positions[3] = {
+        DISPLAY_HEIGHT / 4 - char_height / 2,      // Top (quarter way down)
+        DISPLAY_HEIGHT / 2 - char_height / 2,      // Middle
+        3 * DISPLAY_HEIGHT / 4 - char_height / 2   // Bottom (three quarters down)
+    };
+
+    // Different phase offsets for each line (so they're not aligned)
+    int phase_offsets[3] = {
+        0,
+        text_width / 3,
+        2 * text_width / 3
+    };
+
+    for (int y = 0; y < DISPLAY_HEIGHT; ++y) {
+        // Fill scanline with black background
+        for (int x = 0; x < DISPLAY_WIDTH; ++x) {
+            scanline_buf[x] = 0;  // Black
+        }
+
+        // Check each of the three text positions
+        for (int line = 0; line < 3; line++) {
+            int text_y = text_y_positions[line];
+
+            // Check if this scanline is within this text line
+            if (y >= text_y && y < text_y + char_height) {
+                int row = (y - text_y) / scale;  // Which row of the font (0-6)
+
+                // Calculate scroll position with phase offset (4x speed, was 2)
+                int scroll_offset = ((frame * 4) + phase_offsets[line]) % (text_width + DISPLAY_WIDTH + 100) - 50;
+
+                // Draw each character
+                for (int i = 0; i < text_len; i++) {
+                    char c = text[i];
+                    if (c < 32 || c > 'z') c = ' ';  // Ensure valid character
+
+                    const uint8_t* char_data = font_5x7[c - 32];
+                    int char_x = DISPLAY_WIDTH - scroll_offset + i * char_width;
+
+                    // Draw each column of the character
+                    for (int col = 0; col < 5; col++) {
+                        uint8_t column_data = char_data[col];
+
+                        // Check if this bit is set for the current row
+                        if (column_data & (1 << row)) {
+                            // Draw scaled pixels
+                            for (int sx = 0; sx < scale; sx++) {
+                                int x = char_x + col * scale + sx;
+                                if (x >= 0 && x < DISPLAY_WIDTH) {
+                                    // Different rainbow offset for each line
+                                    float hue = fmodf((i * 30.0f + frame + line * 120.0f), 360.0f);
+                                    float h = hue / 60.0f;
+                                    float xh = 1.0f - fabsf(fmodf(h, 2.0f) - 1.0f);
+                                    float r = 0, g = 0, b = 0;
+
+                                    if (h < 1) { r = 1; g = xh; b = 0; }
+                                    else if (h < 2) { r = xh; g = 1; b = 0; }
+                                    else if (h < 3) { r = 0; g = 1; b = xh; }
+                                    else if (h < 4) { r = 0; g = xh; b = 1; }
+                                    else if (h < 5) { r = xh; g = 0; b = 1; }
+                                    else { r = 1; g = 0; b = xh; }
+
+                                    scanline_buf[x] = rgb565((uint8_t)(r * 255),
+                                                            (uint8_t)(g * 255),
+                                                            (uint8_t)(b * 255));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        display_push_row(y, scanline_buf, DISPLAY_WIDTH);
+        if ((y & 7) == 0) vTaskDelay(0);
+    }
+
+    display_end_frame();
+}
 
 // Render network status with 5 circles showing connected devices
 static void render_network_status(uint32_t frame)
@@ -370,19 +539,37 @@ static void animation_task(void *arg)
     uint32_t frame = 0;
     const TickType_t frame_dt = pdMS_TO_TICKS(40); // ~25 FPS
 
+    // Small delay to ensure display initialization is complete
+    vTaskDelay(pdMS_TO_TICKS(200));
+
+    bool prev_active = false;
+
     while (1) {
         bool active;
+        device_role_t role;
         xSemaphoreTake(anim_mutex, portMAX_DELAY);
         active = anim_ctx.active;
+        role = anim_ctx.device_role;
         xSemaphoreGive(anim_mutex);
 
+        // Log state changes
+        if (active != prev_active) {
+            ESP_LOGI(TAG, "Animation state changed: active=%d, role=%d", active, (int)role);
+            prev_active = active;
+        }
+
         if (!active) {
-            // Idle: Show network status with 5 circles
+            // Idle: Show network status for all devices for now
             render_network_status(frame);
             frame++;
             vTaskDelay(frame_dt);
         } else {
-            render_equalizer_frame(frame);
+            // Playback: Conductor shows scrolling rainbow bar, others show equalizer
+            if (role == ROLE_CONDUCTOR) {
+                render_scrolling_text(frame, current_song_name);
+            } else {
+                render_equalizer_frame(frame);
+            }
             frame++;
             vTaskDelay(frame_dt);
         }
@@ -424,8 +611,10 @@ void display_animations_start_playback(song_type_t song_type)
     anim_ctx.active = true;
     anim_ctx.song_type = song_type;
     anim_ctx.beat_intensity = 0.0f;
+    device_role_t role = anim_ctx.device_role;
     xSemaphoreGive(anim_mutex);
-    ESP_LOGI(TAG, "Animations: start playback (type=%d)", (int)song_type);
+    ESP_LOGI(TAG, "Animations: start playback (type=%d, role=%d, song='%s')",
+             (int)song_type, (int)role, current_song_name);
 }
 
 void display_animations_stop(void)
@@ -434,6 +623,14 @@ void display_animations_stop(void)
     anim_ctx.active = false;
     xSemaphoreGive(anim_mutex);
     ESP_LOGI(TAG, "Animations: stop");
+}
+
+void display_animations_set_song_name(const char* name)
+{
+    if (name) {
+        strncpy(current_song_name, name, sizeof(current_song_name) - 1);
+        current_song_name[sizeof(current_song_name) - 1] = '\0';
+    }
 }
 
 void display_animations_update_beat(float intensity)

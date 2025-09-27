@@ -54,6 +54,7 @@ esp_err_t display_animations_init(void);
 void display_animations_start_idle(void);
 void display_animations_start_playback(song_type_t song_type);
 void display_animations_stop(void);
+void display_animations_set_song_name(const char* name);
 void display_animations_update_beat(float intensity);
 void display_set_brightness(uint8_t brightness);
 
