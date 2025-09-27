@@ -73,17 +73,18 @@ void app_main(void)
     ESP_LOGI(TAG, "Resolved device role: %s (%d)", device_config_get_role_name(role), (int)role);
 
     // Bring up the app subsystems (your implementation should start display + esp-now stacks)
-    orchestra_init();
+    ESP_ERROR_CHECK(orchestra_init());
 
-    // Start the animation engine and show idle blue screen immediately
-    display_animations_init();
+    // Animation engine is already initialized in orchestra_init() -> display_init()
+    // Just start the idle animation
     display_animations_start_idle();
+
+    // Initialize buttons for all devices (conductor and performers)
+    buttons_init();
+    xTaskCreate(button_debug_task, "btn_dbg", 2048, NULL, 5, NULL);
 
     // Conductor: silent control surface that broadcasts start/stop and song index
     if (role == ROLE_CONDUCTOR) {
-        // Buttons are only meaningful on the conductor
-        buttons_init();
-        xTaskCreate(button_debug_task, "btn_dbg", 2048, NULL, 5, NULL);
 
         int  song_index = 0;
         bool playing    = false;
@@ -144,11 +145,39 @@ void app_main(void)
         }
     }
 
-    // Performers: no buttons here; all behavior should be triggered by your
-    // ESPNOW message handlers (inside espnow_comm/orchestra code), which will
-    // call audio_play_song(song_id) on START and audio_stop() on STOP.
-    ESP_LOGI(TAG, "Performer mode: waiting for ESPNOW messages");
+    // Performers: Button B plays test sound for speaker debugging
+    ESP_LOGI(TAG, "Performer mode: B button plays test sound for speaker check");
+
+    // Map each part to their solo song for testing
+    uint8_t test_song = SONG_BLUE_BELLS;  // Default
+    switch (role) {
+        case ROLE_PART_1: test_song = SONG_BLUE_BELLS; break;
+        case ROLE_PART_2: test_song = SONG_CARNIVAL_VAR1; break;
+        case ROLE_PART_3: test_song = SONG_CARNIVAL_THEME; break;
+        case ROLE_PART_4: test_song = SONG_MEDALLION_CALLS; break;
+        default: break;
+    }
+
+    bool prev_mid = false;
+    bool test_playing = false;
+
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        bool mid = btn_read(BTN_MID_GPIO);
+
+        // B button: toggle test sound
+        if (mid && !prev_mid) {
+            if (!test_playing) {
+                ESP_LOGI(TAG, "Part %d: Playing test song %d for speaker check", role, test_song);
+                orchestra_play_song(test_song);
+                test_playing = true;
+            } else {
+                ESP_LOGI(TAG, "Part %d: Stopping test song", role);
+                orchestra_stop();
+                test_playing = false;
+            }
+        }
+
+        prev_mid = mid;
+        vTaskDelay(pdMS_TO_TICKS(15)); // ~66Hz scan
     }
 }

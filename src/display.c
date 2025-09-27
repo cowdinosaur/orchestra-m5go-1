@@ -7,6 +7,7 @@
 #include "freertos/task.h"
 
 #include "esp_log.h"
+#include "esp_err.h"
 #include "driver/gpio.h"
 #include "device_config.h"
 #include "driver/spi_master.h"
@@ -232,11 +233,15 @@ void display_push_framebuffer(const uint16_t *fb, uint16_t w, uint16_t h) {
 }
 
 // Display init
-void display_init(void) {
+esp_err_t display_init(void) {
     display_init_hardware();
 
     // Start the lightweight animations task and go to idle (blue)
-    display_animations_init();
+    esp_err_t ret = display_animations_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to init display animations: %s", esp_err_to_name(ret));
+        return ret;
+    }
     display_animations_start_idle();
 
 #if DISPLAY_SANITY_TEST
@@ -248,4 +253,5 @@ void display_init(void) {
     lcd_fill_rect(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT, rgb565(0,0,200));
 
     ESP_LOGI(TAG, "Display system initialized");
+    return ESP_OK;
 }

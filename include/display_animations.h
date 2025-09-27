@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "esp_err.h"
 #include "orchestra.h"
 
 // M5Stack display dimensions
@@ -14,7 +15,6 @@ typedef enum {
     ANIM_IDLE_STARS,
     ANIM_IDLE_WAVE,
     ANIM_IDLE_RAINBOW,
-    ANIM_IDLE_LOGO,
     ANIM_PLAY_EQUALIZER,
     ANIM_PLAY_CIRCLES,
     ANIM_PLAY_PARTICLES,
@@ -50,12 +50,11 @@ typedef struct {
 } animation_context_t;
 
 // Function declarations
-void display_animations_init(void);
+esp_err_t display_animations_init(void);
 void display_animations_start_idle(void);
 void display_animations_start_playback(song_type_t song_type);
 void display_animations_stop(void);
 void display_animations_update_beat(float intensity);
-void display_draw_tinkercademy_logo(void);
 void display_set_brightness(uint8_t brightness);
 
 // Individual animation functions

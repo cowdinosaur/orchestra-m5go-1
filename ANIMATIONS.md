@@ -6,86 +6,50 @@ The Orchestra M5GO features dynamic visual animations that enhance the musical e
 
 ## Animation States
 
-### 1. Idle Animations (When Not Playing)
+### 1. Idle Animation - Network Status Display
 
-The system cycles through different idle animations every 15 seconds to keep the display interesting:
+**Current Implementation:**
+- **5 Pulsing Circles** showing ESP-NOW network status
+  - Arranged in pentagon pattern
+  - Each circle represents one device in the orchestra
+  - Circle colors indicate status:
+    - **Green (pulsing)**: Your own device
+    - **Cyan (pulsing)**: Connected peer device
+    - **Dark red (static)**: Device slot offline/not detected
+  - Smooth sine-wave pulsing animation at ~25 FPS
+  - Dark blue background (RGB: 0, 0, 50)
 
-#### **Starfield Animation**
-- 3D starfield effect with stars moving toward the viewer
-- Stars get brighter as they approach
-- Creates a sense of depth and motion
-- Reminiscent of classic screensavers
+**Visual Feedback:**
+- When powered up, your device shows as a green pulsing circle
+- As other devices connect via ESP-NOW, they appear as cyan pulsing circles
+- Full network shown when all 5 circles are pulsing (1 green + 4 cyan)
+- Instantly see which devices are online/offline in the orchestra
 
-#### **Wave Pattern**
-- Multiple sine waves flowing across the screen
-- Three layers of waves in different shades of blue
-- Creates an ocean-like calming effect
-- Waves move at different speeds for depth
+### 2. Playback Animation (During Music)
 
-#### **Rainbow Cycle**
-- Smooth color gradient cycling through the entire spectrum
-- Flows vertically down the screen
-- Creates a vibrant, colorful display
-- Speed-adjusted for smooth transitions
+**Current Implementation:**
+- **Equalizer Bars Only**
+  - 12 vertical bars with varying heights
+  - Heights respond to beat intensity (0.0 to 1.0)
+  - Role-based coloring:
+    - Conductor: Base blue
+    - Part 1-4: Unique colors per role
+  - Bar colors tinted based on intensity
+  - Updates at ~25 FPS
 
-#### **Tinkercademy Logo**
-- Displays the Tinkercademy branding
-- Features the mascot character
-- Animated glow effect around the logo
-- Maintains project identity
-
-### 2. Playback Animations (During Music)
-
-Different animations are triggered based on the type of song being played:
+**Planned but Not Yet Implemented:**
 
 #### **Solo Songs** (Purple LED)
-The system cycles through four different visualizations:
-
-1. **Equalizer Bars**
-   - 20 vertical bars representing frequency bands
-   - Heights respond to beat intensity
-   - Color-coded: Green (low), Yellow (medium), Red (high peaks)
-   - Classic music visualizer style
-
-2. **Spiral Animation**
-   - Colorful spiral emanating from center
-   - Hue shifts create rainbow effect
-   - Rotation speed synced to music tempo
-   - Hypnotic, mesmerizing effect
-
-3. **Particle System**
-   - Particles burst from center of screen
-   - Gravity affects particle movement
-   - Each particle has unique color
-   - Fading trails create firework-like effects
-
-4. **Fireworks**
-   - Random firework bursts across screen
-   - Particles with physics simulation
-   - Trailing effects for realism
-   - Celebratory atmosphere
+- Spiral Animation - Rainbow spiral from center
+- Particle System - Gravity-affected particles
+- Fireworks - Burst effects
 
 #### **Duet Songs** (Yellow LED)
-- **Synchronized Circles**
-  - Two circles orbiting the center
-  - Represents the two parts playing together
-  - Pulsing radius creates heartbeat effect
-  - Circles maintain harmonic spacing
+- Synchronized Circles - Two orbiting circles
 
 #### **Quintet Songs** (Green LED)
-Alternates between two animations:
-
-1. **Five Synchronized Circles**
-   - Five circles representing all parts
-   - Arranged in pentagonal formation
-   - Each pulses at slightly different phase
-   - Creates complex visual harmony
-
-2. **Particle Burst**
-   - More intense particle effects
-   - Represents the full ensemble
-   - Particles in quintet colors
-   - Higher particle count than solo mode
+- Five Synchronized Circles - Pentagonal formation
+- Particle Burst - Intense particle effects
 
 ## Visual Effects
 
@@ -201,24 +165,23 @@ Potential additions to the animation system:
 ```
 Power On
     ↓
-Tinkercademy Logo (3 seconds)
+Network Status Display (5 Circles)
+    - Your device: Green pulsing circle
+    - Discovering peers via ESP-NOW
     ↓
-Idle Animation Cycle
-    ├─ Starfield (15 sec)
-    ├─ Wave Pattern (15 sec)
-    ├─ Rainbow Cycle (15 sec)
-    └─ Logo Display (15 sec)
+Other Devices Connect
+    - Each peer appears as cyan pulsing circle
+    - Real-time network visualization
     ↓
 Button Press → Song Selected
     ↓
-Playback Animation (based on song type)
-    ├─ Solo: Equalizer → Spiral → Particles → Fireworks
-    ├─ Duet: Synchronized Dual Circles
-    └─ Quintet: Five Circles ↔ Particle Burst
+Equalizer Animation (all song types)
+    - Role-based colors
+    - Beat-responsive bars
     ↓
 Song Ends
     ↓
-Return to Idle Animation Cycle
+Return to Network Status Display
 ```
 
 This rich animation system ensures the Orchestra M5GO remains visually engaging whether actively playing music or sitting idle, creating an immersive audio-visual experience.

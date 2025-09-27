@@ -11,27 +11,24 @@
 #include "songs.h"
 #include "device_config.h"
 #include "display_animations.h"
+#include "config.h"
+#include "error_handler.h"
 
 static const char *TAG = "AUDIO";
 
 // ----------------------
 // Audio configuration
 // ----------------------
-#define SAMPLE_RATE       44100
-#define DMA_BUF_COUNT     8
-#define DMA_BUF_LEN       64
-
-// Tick timing (make sure SAMPLE_RATE * TICK_MS / 1000 is an integer)
-#ifndef AUDIO_TICK_MS
-#define AUDIO_TICK_MS     10          // 10 ms => 100 ticks/sec
-#endif
+#define SAMPLE_RATE       AUDIO_SAMPLE_RATE
+#define DMA_BUF_COUNT     AUDIO_DMA_BUF_COUNT
+#define DMA_BUF_LEN       AUDIO_DMA_BUF_LEN
 #define SAMPLES_PER_TICK  (SAMPLE_RATE * AUDIO_TICK_MS / 1000)
 
 // ----------------------
 // Audio state
 // ----------------------
 static bool          audio_playing = false;
-static float         volume = 0.08f;        // 0..1
+static float         volume = AUDIO_DEFAULT_VOLUME;  // 0..1
 static TaskHandle_t  playback_task_handle = NULL;
 
 // ----------------------
@@ -51,7 +48,7 @@ static float pulse_intensity_for_note(uint16_t freq, uint16_t dur_ms) {
 // ----------------------
 // I2S setup
 // ----------------------
-static void audio_init_i2s(void) {
+static esp_err_t audio_init_i2s(void) {
     i2s_config_t i2s_config = {
         .mode = I2S_MODE_MASTER | I2S_MODE_TX | I2S_MODE_DAC_BUILT_IN,
         .sample_rate = SAMPLE_RATE,
@@ -64,10 +61,15 @@ static void audio_init_i2s(void) {
         .use_apll = false,
         .tx_desc_auto_clear = true,
     };
-    ESP_ERROR_CHECK(i2s_driver_install(I2S_NUM_0, &i2s_config, 0, NULL));
-    ESP_ERROR_CHECK(i2s_set_dac_mode(I2S_DAC_CHANNEL_RIGHT_EN));
-    ESP_ERROR_CHECK(i2s_set_pin(I2S_NUM_0, NULL));
+    CHECK_ERROR_RETURN(i2s_driver_install(I2S_NUM_0, &i2s_config, 0, NULL),
+                       TAG, "Failed to install I2S driver");
+    CHECK_ERROR_RETURN(i2s_set_dac_mode(I2S_DAC_CHANNEL_RIGHT_EN),
+                       TAG, "Failed to set DAC mode");
+    CHECK_ERROR_RETURN(i2s_set_pin(I2S_NUM_0, NULL),
+                       TAG, "Failed to set I2S pins");
+
     ESP_LOGI(TAG, "I2S audio initialized (%d Hz, %d-sample tick)", SAMPLE_RATE, SAMPLES_PER_TICK);
+    return ESP_OK;
 }
 
 // ----------------------
@@ -120,11 +122,11 @@ static uint16_t transform_freq_for_role(uint16_t base_freq, uint8_t role) {
     switch (role) {
         case ROLE_PART_1: return base_freq;                 // lead
         case ROLE_PART_2: {                                  // down an octave (if too low, revert)
-            uint16_t f = (uint16_t)(base_freq / 2);
-            return (f < 50) ? base_freq : f;
+            uint16_t f = (uint16_t)(base_freq * HARMONY_OCTAVE_DOWN_RATIO);
+            return (f < AUDIO_MIN_FREQUENCY) ? base_freq : f;
         }
-        case ROLE_PART_3: return (uint16_t)(base_freq * 2); // up an octave
-        case ROLE_PART_4: return (uint16_t)((base_freq * 3) / 2); // perfect fifth
+        case ROLE_PART_3: return (uint16_t)(base_freq * HARMONY_OCTAVE_UP_RATIO); // up an octave
+        case ROLE_PART_4: return (uint16_t)(base_freq * HARMONY_FIFTH_RATIO); // perfect fifth
         default:          return base_freq;
     }
 }
@@ -219,9 +221,15 @@ static void playback_task(void *pv) {
 // ----------------------
 // Public API
 // ----------------------
-void audio_init(void) {
-    audio_init_i2s();
-    ESP_LOGI(TAG, "Audio system initialized");
+esp_err_t audio_init(void) {
+    esp_err_t ret = audio_init_i2s();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize I2S: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    ESP_LOGI(TAG, "Audio system initialized successfully");
+    return ESP_OK;
 }
 
 void audio_stop(void) {
@@ -238,34 +246,73 @@ void audio_stop(void) {
     ESP_LOGI(TAG, "Audio stopped");
 }
 
-void audio_play_song(uint8_t song_id) {
+esp_err_t audio_play_song(uint8_t song_id) {
+    // Validate input
+    if (song_id >= total_songs) {
+        ESP_LOGW(TAG, "Invalid song ID: %u", song_id);
+        return ESP_ERR_INVALID_ARG;
+    }
+
     audio_stop();
 
     play_role_param_t *p = (play_role_param_t *)malloc(sizeof(*p));
-    if (!p) { ESP_LOGE(TAG, "alloc play param failed"); return; }
+    if (!p) {
+        ESP_LOGE(TAG, "alloc play param failed");
+        return ESP_ERR_NO_MEM;
+    }
     p->song_id = song_id;
     p->role    = (uint8_t)device_config_get_role();
 
     // Higher prio than UI; modest stack is enough (tick buffer is static)
-    xTaskCreate(playback_task, "playback_tick", 4096, p, 10, &playback_task_handle);
+    BaseType_t ret = xTaskCreate(playback_task, "playback_tick",
+                                 PLAYBACK_TASK_STACK_SIZE, p,
+                                 PLAYBACK_TASK_PRIORITY, &playback_task_handle);
+    if (ret != pdPASS) {
+        free(p);
+        ESP_LOGE(TAG, "Failed to create playback task");
+        return ESP_FAIL;
+    }
+
+    return ESP_OK;
 }
 
-void audio_play_song_for_role(uint8_t song_id, uint8_t role) {
+esp_err_t audio_play_song_for_role(uint8_t song_id, uint8_t role) {
+    // Validate input
+    if (song_id >= total_songs) {
+        ESP_LOGW(TAG, "Invalid song ID: %u", song_id);
+        return ESP_ERR_INVALID_ARG;
+    }
+
     audio_stop();
 
     play_role_param_t *p = (play_role_param_t *)malloc(sizeof(*p));
-    if (!p) { ESP_LOGE(TAG, "alloc play param failed"); return; }
+    if (!p) {
+        ESP_LOGE(TAG, "alloc play param failed");
+        return ESP_ERR_NO_MEM;
+    }
     p->song_id = song_id;
     p->role    = role;
 
-    xTaskCreate(playback_task, "playback_tick", 4096, p, 10, &playback_task_handle);
+    BaseType_t ret = xTaskCreate(playback_task, "playback_tick",
+                                 PLAYBACK_TASK_STACK_SIZE, p,
+                                 PLAYBACK_TASK_PRIORITY, &playback_task_handle);
+    if (ret != pdPASS) {
+        free(p);
+        ESP_LOGE(TAG, "Failed to create playback task");
+        return ESP_FAIL;
+    }
+
+    return ESP_OK;
 }
 
-void audio_set_volume(float vol) {
-    if (vol < 0.0f) vol = 0.0f;
-    if (vol > 1.0f) vol = 1.0f;
+esp_err_t audio_set_volume(float vol) {
+    // Clamp volume to valid range
+    if (vol < AUDIO_MIN_VOLUME) vol = AUDIO_MIN_VOLUME;
+    if (vol > AUDIO_MAX_VOLUME) vol = AUDIO_MAX_VOLUME;
+
     volume = vol;
     ESP_LOGI(TAG, "Volume set to %.2f", volume);
+    return ESP_OK;
 }
 
 bool audio_is_playing(void) { return audio_playing; }

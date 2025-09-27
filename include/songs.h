@@ -20,10 +20,12 @@
 #define NOTE_F3  175
 #define NOTE_G3  196
 #define NOTE_A3  220
+#define NOTE_AS3 233 // Calculated (A-sharp 3 / B-flat 3)
 #define NOTE_B3  247
 
 #define NOTE_C4  262
 #define NOTE_D4  294
+#define NOTE_DS4 311 // Calculated (D-sharp 4 / E-flat 4)
 #define NOTE_E4  330
 #define NOTE_F4  349
 #define NOTE_G4  392
@@ -57,12 +59,12 @@
 #define SIXTEENTH_NOTE  125
 
 // Part masks for multi-part songs
-#define PART_1     0x01
-#define PART_2     0x02
-#define PART_3     0x04
-#define PART_4     0x08
-#define PART_5     0x10
-#define ALL_PARTS  0x1F
+#define PART_1     0x01  // Device role 1
+#define PART_2     0x02  // Device role 2
+#define PART_3     0x04  // Device role 3
+#define PART_4     0x08  // Device role 4
+// Note: Conductor (role 0) doesn't use parts_mask - needs special handling
+#define ALL_PARTS  0x0F  // All performer parts (1-4)
 
 // External song arrays (must be defined in songs.c)
 extern const song_t songs[];

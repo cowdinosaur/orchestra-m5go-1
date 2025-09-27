@@ -40,12 +40,11 @@ static TaskHandle_t s_heartbeat_task = NULL;
 
 // ------------------- Callbacks -------------------
 
-static void espnow_send_cb(const wifi_tx_info_t *info, esp_now_send_status_t status)
+static void espnow_send_cb(const uint8_t *mac_addr, esp_now_send_status_t status)
 {
-    if (info) {
-        const uint8_t *addr = info->des_addr;
+    if (mac_addr) {
         ESP_LOGD(TAG, "Send -> %02X:%02X:%02X:%02X:%02X:%02X status=%d",
-                 addr[0], addr[1], addr[2], addr[3], addr[4], addr[5], status);
+                 mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5], status);
     } else {
         ESP_LOGD(TAG, "Send status=%d", status);
     }

@@ -1,19 +1,26 @@
 // src/display_animations.c
 // Minimal, low-RAM display animations with role-colored equalizer
 #include <string.h>
+#include <math.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "esp_log.h"
+#include "esp_err.h"
 
 #include "display_animations.h"
 #include "device_config.h"
+#include "espnow_discovery.h"
 
 #ifndef DISPLAY_WIDTH
 #define DISPLAY_WIDTH  320
 #endif
 #ifndef DISPLAY_HEIGHT
 #define DISPLAY_HEIGHT 240
+#endif
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
 #endif
 
 static const char *TAG = "DISPLAY_ANIM";
@@ -113,6 +120,206 @@ static void render_equalizer_frame(uint32_t frame)
     display_end_frame();
 }
 
+// Removed unused draw_char_at function - character drawing is now inline in render_network_status
+
+// Render network status with 5 circles showing connected devices
+static void render_network_status(uint32_t frame)
+{
+    // Static variables to track changes and reduce redraws
+    static uint32_t last_full_redraw = 0;
+    static bool device_states[5] = {false, false, false, false, false};
+    static bool prev_device_states[5] = {false, false, false, false, false};
+
+    // Only do full redraw every 2 seconds or on state change
+    bool needs_full_redraw = (frame - last_full_redraw > 50);
+
+    // Circle positions in a pentagon pattern
+    const int center_x = DISPLAY_WIDTH / 2;
+    const int center_y = DISPLAY_HEIGHT / 2;
+    const int pattern_radius = 60;  // Distance from center to each circle
+    const int circle_radius = 25;  // Fixed radius, no pulsing
+
+    // Pentagon angles (72 degrees apart, starting from top)
+    const float angles[5] = {
+        -M_PI/2,                    // Top (Conductor)
+        -M_PI/2 + 2*M_PI/5,        // Top-right (Part 1)
+        -M_PI/2 + 4*M_PI/5,        // Bottom-right (Part 2)
+        -M_PI/2 + 6*M_PI/5,        // Bottom-left (Part 3)
+        -M_PI/2 + 8*M_PI/5         // Top-left (Part 4)
+    };
+
+    // Role labels
+    const char role_labels[5] = {'C', '1', '2', '3', '4'};
+
+    // Get device status
+    device_role_t my_role = device_config_get_role();
+    const peer_device_t* peers = espnow_discovery_get_peers();
+
+    // Check current device states
+    for (int i = 0; i < 5; i++) {
+        prev_device_states[i] = device_states[i];
+        if (i == (int)my_role) {
+            device_states[i] = true;
+        } else {
+            device_states[i] = false;
+            for (int p = 0; p < 5; p++) {
+                if (peers[p].is_online && peers[p].role == (device_role_t)i) {
+                    device_states[i] = true;
+                    break;
+                }
+            }
+        }
+        // Check if any state changed
+        if (device_states[i] != prev_device_states[i]) {
+            needs_full_redraw = true;
+        }
+    }
+
+    // Only redraw if needed
+    if (!needs_full_redraw) return;
+
+    last_full_redraw = frame;
+
+    // Clear screen with dark blue background
+    display_begin_frame(DISPLAY_WIDTH, DISPLAY_HEIGHT);
+    uint16_t bg_color = rgb565(10, 10, 30);  // Dark blue background
+
+    for (int y = 0; y < DISPLAY_HEIGHT; ++y) {
+        // Fill scanline with background
+        for (int x = 0; x < DISPLAY_WIDTH; ++x) {
+            scanline_buf[x] = bg_color;
+        }
+
+        // Draw circles for this scanline
+        for (int i = 0; i < 5; i++) {
+            int cx = center_x + (int)(pattern_radius * cosf(angles[i]));
+            int cy = center_y + (int)(pattern_radius * sinf(angles[i]));
+
+            bool is_online = device_states[i];
+            uint16_t circle_color;
+            uint16_t text_color = rgb565(255, 255, 255);  // White text
+
+            // Set colors based on device state
+            if (i == (int)my_role) {
+                // Our own device - solid green
+                circle_color = rgb565(0, 200, 0);
+            } else if (is_online) {
+                // Connected peer - solid cyan
+                circle_color = rgb565(0, 150, 150);
+            } else {
+                // Offline device - dark gray
+                circle_color = rgb565(30, 30, 30);
+                text_color = rgb565(100, 100, 100);  // Dimmer text for offline
+            }
+
+            // Check if this scanline intersects with the circle
+            int dy = y - cy;
+            if (abs(dy) <= circle_radius) {
+                int dx = (int)sqrtf((float)(circle_radius * circle_radius - dy * dy));
+                int x_start = cx - dx;
+                int x_end = cx + dx;
+
+                // Draw the circle segment for this scanline
+                for (int x = x_start; x <= x_end; x++) {
+                    if (x >= 0 && x < DISPLAY_WIDTH) {
+                        scanline_buf[x] = circle_color;
+                    }
+                }
+
+                // Draw role label in center of circle
+                // Simple large character rendering (9x9 for visibility)
+                if (abs(dy) <= 4) {  // Character height region
+                    char label = role_labels[i];
+
+                    // Define simple patterns for each character (9 pixels wide)
+                    int char_offset = dy + 4;  // 0-8 range
+
+                    if (label == 'C' && char_offset >= 1 && char_offset <= 7) {
+                        // Draw 'C' - 7x7 within 9x9
+                        const bool c_pattern[7][7] = {
+                            {0,1,1,1,1,1,0},
+                            {1,1,0,0,0,1,1},
+                            {1,1,0,0,0,0,0},
+                            {1,1,0,0,0,0,0},
+                            {1,1,0,0,0,0,0},
+                            {1,1,0,0,0,1,1},
+                            {0,1,1,1,1,1,0}
+                        };
+                        int row = char_offset - 1;
+                        for (int col = 0; col < 7; col++) {
+                            int px = cx - 3 + col;
+                            if (px >= x_start && px <= x_end && px >= 0 && px < DISPLAY_WIDTH) {
+                                if (c_pattern[row][col]) {
+                                    scanline_buf[px] = text_color;
+                                }
+                            }
+                        }
+                    }
+                    else if (label >= '1' && label <= '4' && char_offset >= 1 && char_offset <= 7) {
+                        // Simplified number rendering
+                        int row = char_offset - 1;
+                        if (label == '1') {
+                            // Draw '1' - simple vertical line with top
+                            if (row == 0 || row == 1) {  // Top
+                                for (int px = cx - 1; px <= cx; px++) {
+                                    if (px >= x_start && px <= x_end && px >= 0 && px < DISPLAY_WIDTH)
+                                        scanline_buf[px] = text_color;
+                                }
+                            } else {  // Vertical line
+                                if (cx >= x_start && cx <= x_end && cx >= 0 && cx < DISPLAY_WIDTH)
+                                    scanline_buf[cx] = text_color;
+                            }
+                        }
+                        else if (label == '2') {
+                            // Draw '2' - top, middle, bottom bars with connections
+                            if (row == 0 || row == 3 || row == 6) {  // Horizontal bars
+                                for (int px = cx - 2; px <= cx + 2; px++) {
+                                    if (px >= x_start && px <= x_end && px >= 0 && px < DISPLAY_WIDTH)
+                                        scanline_buf[px] = text_color;
+                                }
+                            } else if (row < 3 && cx + 2 >= x_start && cx + 2 <= x_end) {
+                                scanline_buf[cx + 2] = text_color;  // Top right
+                            } else if (row > 3 && cx - 2 >= x_start && cx - 2 <= x_end) {
+                                scanline_buf[cx - 2] = text_color;  // Bottom left
+                            }
+                        }
+                        else if (label == '3') {
+                            // Draw '3' - three horizontal bars with right side
+                            if (row == 0 || row == 3 || row == 6) {  // Horizontal bars
+                                for (int px = cx - 2; px <= cx + 2; px++) {
+                                    if (px >= x_start && px <= x_end && px >= 0 && px < DISPLAY_WIDTH)
+                                        scanline_buf[px] = text_color;
+                                }
+                            } else if (cx + 2 >= x_start && cx + 2 <= x_end) {
+                                scanline_buf[cx + 2] = text_color;  // Right side
+                            }
+                        }
+                        else if (label == '4') {
+                            // Draw '4' - left vertical, horizontal middle, right vertical
+                            if (row == 3) {  // Horizontal middle
+                                for (int px = cx - 2; px <= cx + 2; px++) {
+                                    if (px >= x_start && px <= x_end && px >= 0 && px < DISPLAY_WIDTH)
+                                        scanline_buf[px] = text_color;
+                                }
+                            } else if (row < 3 && cx - 2 >= x_start && cx - 2 <= x_end) {
+                                scanline_buf[cx - 2] = text_color;  // Left top
+                            }
+                            if (cx + 2 >= x_start && cx + 2 <= x_end && cx + 2 >= 0 && cx + 2 < DISPLAY_WIDTH) {
+                                scanline_buf[cx + 2] = text_color;  // Right full
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        display_push_row(y, scanline_buf, DISPLAY_WIDTH);
+        if ((y & 7) == 0) vTaskDelay(0);
+    }
+
+    display_end_frame();
+}
+
 static void animation_task(void *arg)
 {
     (void)arg;
@@ -126,17 +333,10 @@ static void animation_task(void *arg)
         xSemaphoreGive(anim_mutex);
 
         if (!active) {
-            // Idle: full-screen solid BLUE once per loop (no flicker)
-            uint16_t c = rgb565(0, 0, 200); // bright-ish blue
-            display_begin_frame(DISPLAY_WIDTH, DISPLAY_HEIGHT);
-            for (int y = 0; y < DISPLAY_HEIGHT; ++y) {
-                for (int x = 0; x < DISPLAY_WIDTH; ++x) scanline_buf[x] = c;
-                display_push_row(y, scanline_buf, DISPLAY_WIDTH);
-                if ((y & 7) == 0) vTaskDelay(0);
-            }
-            display_end_frame();
-            // Sleep a bit so we don't keep repainting when idle
-            vTaskDelay(pdMS_TO_TICKS(250));
+            // Idle: Show network status with 5 circles
+            render_network_status(frame);
+            frame++;
+            vTaskDelay(frame_dt);
         } else {
             render_equalizer_frame(frame);
             frame++;
@@ -145,13 +345,13 @@ static void animation_task(void *arg)
     }
 }
 
-void display_animations_init(void)
+esp_err_t display_animations_init(void)
 {
     memset(&anim_ctx, 0, sizeof(anim_ctx));
     anim_mutex = xSemaphoreCreateMutex();
     if (!anim_mutex) {
         ESP_LOGE(TAG, "Failed to create anim mutex");
-        return;
+        return ESP_ERR_NO_MEM;
     }
 
     // Capture device role ONCE
@@ -162,6 +362,7 @@ void display_animations_init(void)
 
     xTaskCreate(animation_task, "animation_task", 2048, NULL, 3, NULL);
     ESP_LOGI(TAG, "Display animations initialized; role=%d", (int)anim_ctx.device_role);
+    return ESP_OK;
 }
 
 void display_animations_start_idle(void)

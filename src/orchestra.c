@@ -8,38 +8,26 @@
 #include "orchestra.h"
 #include "songs.h"
 #include "espnow_discovery.h"
-
 #include "device_config.h"   // <-- for device_config_get_role(), ROLE_*
+#include "config.h"          // Centralized configuration
+#include "error_handler.h"   // Error handling macros
+#include "audio.h"           // Audio interface
+#include "rgb_led.h"         // RGB LED interface
+#include "display.h"         // Display interface
+#include "display_animations.h" // Animation interface
+#include "espnow_comm.h"     // ESP-NOW interface
 
 static const char *TAG = "ORCHESTRA";
 
-// External function declarations
-extern void audio_init(void);
-extern void audio_play_song(uint8_t song_id);
-// New role-aware playback (implemented in audio.c)
-extern void audio_play_song_for_role(uint8_t song_id, uint8_t role);
-extern void audio_stop(void);
-extern void audio_set_volume(float vol);
-extern bool audio_is_playing(void);
+// Module interfaces are now included via headers - no extern declarations needed
 
-extern void rgb_init(void);
-extern void rgb_set_all_color(uint32_t color);
-extern void rgb_breathing_effect(uint32_t color, uint32_t duration_ms);
-
-extern void display_init(void);
-extern void display_animations_init(void);
-extern void display_animations_start_idle(void);
-extern void display_animations_start_playback(song_type_t song_type);
-extern void display_animations_stop(void);
-extern void display_animations_update_beat(float intensity);
-
-extern esp_err_t espnow_init(uint8_t id);
-extern esp_err_t espnow_broadcast(msg_type_t type, uint8_t song_id);
-
-// Button GPIO pins (M5Stack Core)
-#define BUTTON_A_PIN    39
-#define BUTTON_B_PIN    38
-#define BUTTON_C_PIN    37
+// Button configuration structure
+typedef struct {
+    const uint8_t *songs;
+    uint8_t count;
+    uint8_t *index;
+    const char *name;
+} button_config_t;
 
 // Device / state
 static uint8_t device_id = 0;
@@ -61,6 +49,13 @@ static uint8_t button_a_index = 0;
 static uint8_t button_b_index = 0;
 static uint8_t button_c_index = 0;
 
+// Button configurations array for unified handling
+static button_config_t button_configs[3] = {
+    [0] = { button_a_songs, sizeof(button_a_songs)/sizeof(button_a_songs[0]), &button_a_index, "A" },
+    [1] = { button_b_songs, sizeof(button_b_songs)/sizeof(button_b_songs[0]), &button_b_index, "B" },
+    [2] = { button_c_songs, sizeof(button_c_songs)/sizeof(button_c_songs[0]), &button_c_index, "C" }
+};
+
 // If you later want GPIO/NVS based IDs, wire them here
 // (previously had a get_device_id helper that was unused; removed to avoid
 // -Werror=unused-function build failures)
@@ -76,22 +71,46 @@ static void IRAM_ATTR button_isr_handler(void *arg) {
     }
 }
 
+// Unified button handler to eliminate duplication
+static void handle_button_press(uint8_t button_id) {
+    if (!s_is_conductor || button_id >= 3) return;
+
+    button_config_t *config = &button_configs[button_id];
+    ESP_LOGI(TAG, "Button %s pressed", config->name);
+
+    // Get next song in rotation
+    uint8_t song_id = config->songs[*config->index];
+    *config->index = (*config->index + 1) % config->count;
+
+    // Validate song ID
+    if (song_id >= total_songs) {
+        ESP_LOGW(TAG, "Invalid song ID %u for button %s", song_id, config->name);
+        return;
+    }
+
+    // Broadcast to all devices
+    esp_err_t err = espnow_broadcast(MSG_SYNC_START, song_id);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to broadcast song start: %s", esp_err_to_name(err));
+        return;
+    }
+
+    // Update local visuals
+    const song_t *song = &songs[song_id];
+    display_animations_start_playback(song->type);
+}
+
 static void button_task(void *pvParameters) {
     uint32_t btn;
     TickType_t last_press[3] = {0,0,0};
-    const TickType_t debounce = pdMS_TO_TICKS(200);
+    const TickType_t debounce = pdMS_TO_TICKS(BUTTON_DEBOUNCE_MS);
 
     while (1) {
         if (xTaskNotifyWait(0, 0xFFFFFFFF, &btn, portMAX_DELAY) == pdTRUE) {
             TickType_t now = xTaskGetTickCount();
             if (btn < 3 && (now - last_press[btn] >= debounce)) {
                 last_press[btn] = now;
-                switch (btn) {
-                    case 0: orchestra_handle_button_a(); break;
-                    case 1: orchestra_handle_button_b(); break;
-                    case 2: orchestra_handle_button_c(); break;
-                    default: break;
-                }
+                handle_button_press(btn);
             }
         }
     }
@@ -101,7 +120,7 @@ static void init_buttons(void) {
     // NOTE: GPIOs 37/38/39 are input-only and have NO internal pull-ups.
     // M5Stack board provides external resistors. Keep pull-ups disabled.
     gpio_config_t io_conf = {
-        .pin_bit_mask = (1ULL << BUTTON_A_PIN) | (1ULL << BUTTON_B_PIN) | (1ULL << BUTTON_C_PIN),
+        .pin_bit_mask = (1ULL << BTN_A_GPIO) | (1ULL << BTN_B_GPIO) | (1ULL << BTN_C_GPIO),
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
@@ -110,16 +129,16 @@ static void init_buttons(void) {
     ESP_ERROR_CHECK(gpio_config(&io_conf));
 
     ESP_ERROR_CHECK(gpio_install_isr_service(0));
-    ESP_ERROR_CHECK(gpio_isr_handler_add(BUTTON_A_PIN, button_isr_handler, (void*)0));
-    ESP_ERROR_CHECK(gpio_isr_handler_add(BUTTON_B_PIN, button_isr_handler, (void*)1));
-    ESP_ERROR_CHECK(gpio_isr_handler_add(BUTTON_C_PIN, button_isr_handler, (void*)2));
+    ESP_ERROR_CHECK(gpio_isr_handler_add(BTN_A_GPIO, button_isr_handler, (void*)0));
+    ESP_ERROR_CHECK(gpio_isr_handler_add(BTN_B_GPIO, button_isr_handler, (void*)1));
+    ESP_ERROR_CHECK(gpio_isr_handler_add(BTN_C_GPIO, button_isr_handler, (void*)2));
 
-    xTaskCreate(button_task, "button_task", 2048, NULL, 10, &s_btn_task_handle);
+    xTaskCreate(button_task, "button_task", BUTTON_TASK_STACK_SIZE, NULL, BUTTON_TASK_PRIORITY, &s_btn_task_handle);
     ESP_LOGI(TAG, "Buttons initialized (conductor)");
 }
 
 // ------------- Public API -------------
-void orchestra_init(void) {
+esp_err_t orchestra_init(void) {
     ESP_LOGI(TAG, "Initializing Orchestra…");
 
     orchestra_mutex = xSemaphoreCreateMutex();
@@ -133,10 +152,17 @@ void orchestra_init(void) {
              (int)s_role, device_config_get_role_name(s_role), device_id);
 
     // Subsystems
-    audio_init();                  // safe on conductor; we just won't call play
+    esp_err_t ret = audio_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize audio: %s", esp_err_to_name(ret));
+        return ret;
+    }
     rgb_init();
-    display_init();
-    display_animations_init();
+    ret = display_init();  // This already calls display_animations_init internally
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize display: %s", esp_err_to_name(ret));
+        return ret;
+    }
     ESP_ERROR_CHECK(espnow_init(device_id));
 
     // Only the conductor owns buttons; performers ignore local inputs
@@ -144,21 +170,24 @@ void orchestra_init(void) {
         init_buttons();
     }
 
-    // Default volume
-    // Default volume (kept in sync with audio.c default)
-    audio_set_volume(0.08f);
+    // Default volume from config
+    ret = audio_set_volume(AUDIO_DEFAULT_VOLUME);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to set default volume: %s", esp_err_to_name(ret));
+    }
 
     // Idle visuals
     display_animations_start_idle();
     rgb_set_all_color(COLOR_IDLE);
 
     ESP_LOGI(TAG, "Orchestra initialized");
+    return ESP_OK;
 }
 
-void orchestra_play_song(uint8_t song_id) {
+esp_err_t orchestra_play_song(uint8_t song_id) {
     if (song_id >= total_songs) {
         ESP_LOGW(TAG, "Invalid song ID: %u", song_id);
-        return;
+        return ESP_ERR_INVALID_ARG;
     }
 
     xSemaphoreTake(orchestra_mutex, portMAX_DELAY);
@@ -196,9 +225,21 @@ void orchestra_play_song(uint8_t song_id) {
     bool should_play = false;
 
     if (s_is_conductor) {
-        // Conductor is silent. Never call audio_play_song() here.
-        should_play = false;
-        ESP_LOGI(TAG, "Conductor: visual-only, no audio output.");
+        // Conductor can play for certain songs (TV Time solo, Canon in D duet)
+        // Special handling for conductor audio playback
+        if (song_id == SONG_TV_TIME) {
+            // TV Time is a solo for the conductor
+            should_play = true;
+            ESP_LOGI(TAG, "Conductor: playing TV Time solo");
+        } else if (song_id == SONG_CANON_IN_D) {
+            // Canon in D: Conductor plays with Part 1 (ideally would alternate with Parts 2&4)
+            should_play = true;
+            ESP_LOGI(TAG, "Conductor: playing Canon in D duet");
+        } else {
+            // For other songs, conductor is visual-only
+            should_play = false;
+            ESP_LOGI(TAG, "Conductor: visual-only, no audio output.");
+        }
     } else {
         // Performer: decide by song type / parts mask
         if (song->type == SONG_TYPE_QUINTET) {
@@ -215,13 +256,19 @@ void orchestra_play_song(uint8_t song_id) {
 
     if (should_play) {
         // Use role-aware playback so each performer produces a different part
-        audio_play_song_for_role(song_id, (uint8_t)s_role);
+        esp_err_t audio_ret = audio_play_song_for_role(song_id, (uint8_t)s_role);
+        if (audio_ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to play song: %s", esp_err_to_name(audio_ret));
+            xSemaphoreGive(orchestra_mutex);
+            return audio_ret;
+        }
         is_playing = true;
     }
 
     ESP_LOGI(TAG, "Playback decision: should_play=%d (role=%d)", (int)should_play, (int)s_role);
 
     xSemaphoreGive(orchestra_mutex);
+    return ESP_OK;
 }
 
 void orchestra_stop(void) {
@@ -233,7 +280,7 @@ void orchestra_stop(void) {
     }
 
     display_animations_stop();
-    vTaskDelay(pdMS_TO_TICKS(80));
+    vTaskDelay(pdMS_TO_TICKS(IDLE_ANIMATION_DELAY_MS));
     display_animations_start_idle();
     rgb_set_all_color(COLOR_IDLE);
     is_playing = false;
@@ -243,48 +290,20 @@ void orchestra_stop(void) {
     xSemaphoreGive(orchestra_mutex);
 }
 
-void orchestra_set_volume(float volume) {
-    audio_set_volume(volume);
+esp_err_t orchestra_set_volume(float volume) {
+    return audio_set_volume(volume);
 }
 
 // -------- Button handlers (conductor only) --------
+// Legacy button handlers now just call the unified handler
 void orchestra_handle_button_a(void) {
-    if (!s_is_conductor) return;  // performers ignore buttons
-    ESP_LOGI(TAG, "Btn A");
-
-    uint8_t song_id = button_a_songs[button_a_index];
-    button_a_index = (button_a_index + 1) % (sizeof(button_a_songs)/sizeof(button_a_songs[0]));
-
-    // Broadcast only; conductor stays silent locally
-    espnow_broadcast(MSG_SYNC_START, song_id);
-
-    // Optional: update visuals locally to reflect the selection/start
-    const song_t *song = &songs[song_id];
-    display_animations_start_playback(song->type);
+    handle_button_press(0);
 }
 
 void orchestra_handle_button_b(void) {
-    if (!s_is_conductor) return;
-    ESP_LOGI(TAG, "Btn B");
-
-    uint8_t song_id = button_b_songs[button_b_index];
-    button_b_index = (button_b_index + 1) % (sizeof(button_b_songs)/sizeof(button_b_songs[0]));
-
-    espnow_broadcast(MSG_SYNC_START, song_id);
-
-    const song_t *song = &songs[song_id];
-    display_animations_start_playback(song->type);
+    handle_button_press(1);
 }
 
 void orchestra_handle_button_c(void) {
-    if (!s_is_conductor) return;
-    ESP_LOGI(TAG, "Btn C");
-
-    uint8_t song_id = button_c_songs[button_c_index];
-    button_c_index = (button_c_index + 1) % (sizeof(button_c_songs)/sizeof(button_c_songs[0]));
-
-    espnow_broadcast(MSG_SYNC_START, song_id);
-
-    const song_t *song = &songs[song_id];
-    display_animations_start_playback(song->type);
+    handle_button_press(2);
 }

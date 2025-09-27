@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "esp_err.h"
 
 // Song types
 typedef enum {
@@ -55,11 +56,11 @@ typedef struct {
     uint8_t sender_id;
 } espnow_msg_t;
 
-// Function declarations
-void orchestra_init(void);
-void orchestra_play_song(uint8_t song_id);
+// Function declarations with proper error handling
+esp_err_t orchestra_init(void);
+esp_err_t orchestra_play_song(uint8_t song_id);
 void orchestra_stop(void);
-void orchestra_set_volume(float volume);
+esp_err_t orchestra_set_volume(float volume);
 void orchestra_handle_button_a(void);
 void orchestra_handle_button_b(void);
 void orchestra_handle_button_c(void);
