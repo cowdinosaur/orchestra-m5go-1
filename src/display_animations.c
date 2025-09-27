@@ -137,24 +137,24 @@ static void render_equalizer_frame(uint32_t frame)
 // Render network status with 5 circles showing connected devices
 static void render_network_status(uint32_t frame)
 {
-    // Static variables to track changes and reduce redraws
+    // Static variables to track changes
     static uint32_t last_check_frame = 0;
     static bool device_states[5] = {false, false, false, false, false};
-    static bool prev_device_states[5] = {false, false, false, false, false};
-    static bool first_draw = true;
 
     // Check device states every 10 frames (about 400ms at 25fps)
-    bool check_states = (frame - last_check_frame >= 10) || first_draw;
-    bool needs_full_redraw = first_draw;
+    bool check_states = (frame - last_check_frame >= 10);
 
     // Circle positions in a pentagon pattern
     const int center_x = DISPLAY_WIDTH / 2;
     const int center_y = DISPLAY_HEIGHT / 2;
     const int pattern_radius = 60;  // Distance from center to each circle
-    const int circle_radius = 25;  // Fixed radius, no pulsing
+    const int circle_radius = 25;  // Fixed radius
+
+    // Slowly rotating pentagon (one rotation per ~10 seconds)
+    float rotation = frame * 0.01f;
 
     // Pentagon angles (72 degrees apart, starting from top)
-    const float angles[5] = {
+    const float base_angles[5] = {
         -M_PI/2,                    // Top (Conductor)
         -M_PI/2 + 2*M_PI/5,        // Top-right (Part 1)
         -M_PI/2 + 4*M_PI/5,        // Bottom-right (Part 2)
@@ -175,7 +175,6 @@ static void render_network_status(uint32_t frame)
 
         // Check current device states
         for (int i = 0; i < 5; i++) {
-            prev_device_states[i] = device_states[i];
             if (i == (int)my_role) {
                 device_states[i] = true;
             } else {
@@ -187,21 +186,22 @@ static void render_network_status(uint32_t frame)
                     }
                 }
             }
-            // Check if any state changed
-            if (device_states[i] != prev_device_states[i]) {
-                needs_full_redraw = true;
-            }
         }
     }
 
-    // Only redraw if needed
-    if (!needs_full_redraw) return;
-
-    first_draw = false;
+    // Always redraw for animation (pulsing effect)
 
     // Clear screen with pure black background
     display_begin_frame(DISPLAY_WIDTH, DISPLAY_HEIGHT);
     uint16_t bg_color = 0;  // Pure black background
+
+    // Calculate rotated positions for all circles
+    int circle_x[5], circle_y[5];
+    for (int i = 0; i < 5; i++) {
+        float angle = base_angles[i] + rotation;
+        circle_x[i] = center_x + (int)(pattern_radius * cosf(angle));
+        circle_y[i] = center_y + (int)(pattern_radius * sinf(angle));
+    }
 
     for (int y = 0; y < DISPLAY_HEIGHT; ++y) {
         // Fill scanline with background
@@ -209,31 +209,49 @@ static void render_network_status(uint32_t frame)
             scanline_buf[x] = bg_color;
         }
 
+        // Draw connection lines between connected devices (before circles)
+        for (int i = 0; i < 5; i++) {
+            if (!device_states[i]) continue;
+            for (int j = i + 1; j < 5; j++) {
+                if (!device_states[j]) continue;
+
+                // Simple line drawing between connected devices
+                int x1 = circle_x[i], y1 = circle_y[i];
+                int x2 = circle_x[j], y2 = circle_y[j];
+
+                // Check if this scanline intersects with the line
+                if ((y >= y1 && y <= y2) || (y >= y2 && y <= y1)) {
+                    // Linear interpolation for the line
+                    if (y2 != y1) {
+                        int x = x1 + (x2 - x1) * (y - y1) / (y2 - y1);
+                        // Draw a 2-pixel wide line for visibility
+                        if (x >= 0 && x < DISPLAY_WIDTH) {
+                            scanline_buf[x] = rgb565(0, 40, 40);  // Dim cyan line
+                            if (x + 1 < DISPLAY_WIDTH) scanline_buf[x + 1] = rgb565(0, 40, 40);
+                        }
+                    }
+                }
+            }
+        }
+
         // Draw circles for this scanline
         for (int i = 0; i < 5; i++) {
-            int cx = center_x + (int)(pattern_radius * cosf(angles[i]));
-            int cy = center_y + (int)(pattern_radius * sinf(angles[i]));
+            int cx = circle_x[i];
+            int cy = circle_y[i];
 
             bool is_online = device_states[i];
             uint16_t circle_color;
             uint16_t text_color = rgb565(255, 255, 255);  // White text
 
-            // Add pulsing effect for online devices
-            float pulse = (is_online && i == (int)my_role) ?
-                         0.7f + 0.3f * sinf(frame * 0.1f) :
-                         (is_online ? 0.6f + 0.2f * sinf(frame * 0.08f) : 1.0f);
-
-            // Set colors based on device state
+            // Set colors based on device state (no pulsing for now to fix rendering)
             if (i == (int)my_role) {
-                // Our own device - pulsing purple
-                uint8_t intensity = (uint8_t)(200 * pulse);
-                circle_color = rgb565(intensity, 0, intensity);  // Purple
+                // Our own device - solid purple
+                circle_color = rgb565(150, 0, 150);  // Purple
             } else if (is_online) {
-                // Connected peer - pulsing cyan
-                uint8_t intensity = (uint8_t)(150 * pulse);
-                circle_color = rgb565(0, intensity, intensity);
+                // Connected peer - solid cyan
+                circle_color = rgb565(0, 120, 120);
             } else {
-                // Offline device - dark gray (no pulse)
+                // Offline device - dark gray
                 circle_color = rgb565(20, 20, 20);
                 text_color = rgb565(80, 80, 80);  // Dimmer text for offline
             }

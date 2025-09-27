@@ -165,6 +165,10 @@ esp_err_t orchestra_init(void) {
     }
     ESP_ERROR_CHECK(espnow_init(device_id));
 
+    // Initialize and start discovery for peer tracking
+    ESP_ERROR_CHECK(espnow_discovery_init());
+    ESP_ERROR_CHECK(espnow_discovery_start());
+
     // Only the conductor owns buttons; performers ignore local inputs
     if (s_is_conductor) {
         init_buttons();

@@ -9,23 +9,26 @@ The Orchestra M5GO features dynamic visual animations that enhance the musical e
 ### 1. Idle Animation - Network Status Display
 
 **Current Implementation:**
-- **5 Pulsing Circles** showing ESP-NOW network status
+- **5 Rotating Circles** showing ESP-NOW network status
   - Arranged in pentagon pattern (72° apart)
+  - **Slowly rotating constellation** - entire pattern rotates (one full rotation per ~10 seconds)
   - Each circle represents one device in the orchestra
   - Circle colors indicate status:
-    - **Purple (pulsing)**: Your own device
-    - **Cyan (pulsing)**: Connected peer device
-    - **Dark gray (static)**: Device slot offline/not detected
-  - Smooth sine-wave pulsing animation at ~25 FPS
+    - **Purple (solid)**: Your own device
+    - **Cyan (solid)**: Connected peer device
+    - **Dark gray**: Device slot offline/not detected
+  - **Connection lines**: Dim cyan lines connect all online devices creating a network constellation
   - Pure black background for high contrast
   - Each circle labeled with role (C, 1, 2, 3, 4)
   - State checks every 400ms for responsive updates
 
-**Visual Feedback:**
-- When powered up, your device shows as a purple pulsing circle
-- As other devices connect via ESP-NOW, they appear as cyan pulsing circles
-- Full network shown when all 5 circles are pulsing (1 purple + up to 4 cyan)
-- Instantly see which devices are online/offline in the orchestra
+**Visual Features:**
+- **Dynamic rotation**: The pentagon slowly rotates, creating engaging movement
+- **Network visualization**: Connection lines show the mesh network between online devices
+- **Role identification**: White text labels inside circles (dimmed for offline devices)
+- When powered up, your device shows as a purple circle
+- As other devices connect via ESP-NOW, they appear as cyan circles with connection lines
+- Full network shown when all 5 circles are connected with lines
 - Dark/black background matches the equalizer for visual consistency
 
 ### 2. Playback Animation (During Music)
@@ -175,19 +178,22 @@ Potential additions to the animation system:
 ```
 Power On
     ↓
-Network Status Display (5 Circles)
-    - Your device: Green pulsing circle
+Network Status Display (5 Rotating Circles)
+    - Your device: Purple circle
+    - Pentagon pattern slowly rotating
     - Discovering peers via ESP-NOW
     ↓
 Other Devices Connect
-    - Each peer appears as cyan pulsing circle
-    - Real-time network visualization
+    - Each peer appears as cyan circle
+    - Connection lines drawn between online devices
+    - Creates animated network constellation
     ↓
 Button Press → Song Selected
     ↓
-Equalizer Animation (all song types)
-    - Role-based colors
-    - Beat-responsive bars
+Rainbow Equalizer Animation (all song types)
+    - 12 colorful bars on black background
+    - Dynamic wave movements
+    - Beat-responsive heights
     ↓
 Song Ends
     ↓
