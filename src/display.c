@@ -202,7 +202,7 @@ static void display_init_hardware(void) {
         lcd_write_cmd(0x3A); // COLMOD: 16bpp
         lcd_write_data8(0x55);
 
-        lcd_write_cmd(0x20); // INVOFF
+        lcd_write_cmd(0x21); // INVON - M5Stack display needs inversion ON
         lcd_write_cmd(0x36);
         lcd_write_data8(0x08); // MADCTL BGR
 

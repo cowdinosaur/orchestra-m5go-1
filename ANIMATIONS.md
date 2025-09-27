@@ -10,32 +10,42 @@ The Orchestra M5GO features dynamic visual animations that enhance the musical e
 
 **Current Implementation:**
 - **5 Pulsing Circles** showing ESP-NOW network status
-  - Arranged in pentagon pattern
+  - Arranged in pentagon pattern (72° apart)
   - Each circle represents one device in the orchestra
   - Circle colors indicate status:
-    - **Green (pulsing)**: Your own device
+    - **Purple (pulsing)**: Your own device
     - **Cyan (pulsing)**: Connected peer device
-    - **Dark red (static)**: Device slot offline/not detected
+    - **Dark gray (static)**: Device slot offline/not detected
   - Smooth sine-wave pulsing animation at ~25 FPS
-  - Dark blue background (RGB: 0, 0, 50)
+  - Pure black background for high contrast
+  - Each circle labeled with role (C, 1, 2, 3, 4)
+  - State checks every 400ms for responsive updates
 
 **Visual Feedback:**
-- When powered up, your device shows as a green pulsing circle
+- When powered up, your device shows as a purple pulsing circle
 - As other devices connect via ESP-NOW, they appear as cyan pulsing circles
-- Full network shown when all 5 circles are pulsing (1 green + 4 cyan)
+- Full network shown when all 5 circles are pulsing (1 purple + up to 4 cyan)
 - Instantly see which devices are online/offline in the orchestra
+- Dark/black background matches the equalizer for visual consistency
 
 ### 2. Playback Animation (During Music)
 
 **Current Implementation:**
-- **Equalizer Bars Only**
-  - 12 vertical bars with varying heights
-  - Heights respond to beat intensity (0.0 to 1.0)
-  - Role-based coloring:
-    - Conductor: Base blue
-    - Part 1-4: Unique colors per role
-  - Bar colors tinted based on intensity
-  - Updates at ~25 FPS
+- **Dynamic Rainbow Equalizer**
+  - 12 vertical bars with organic movement
+  - **Color Scheme:**
+    - Pure black background for maximum contrast
+    - Rainbow gradient across bars (red → orange → yellow → green → blue → purple)
+    - Colors rotate continuously for fluid motion
+    - Vertical gradient within each bar (darker at top, brighter at bottom)
+  - **Movement Dynamics:**
+    - Three overlapping sine waves create natural, fluid motion
+    - Bars range from 30% to 90% of screen height
+    - Baseline wave activity ensures constant movement even without beat
+    - Beat intensity adds up to 30% additional height
+    - Each bar moves independently with phase offsets
+  - **Performance:** Updates at ~25 FPS
+  - **Visual Impact:** High contrast colorful bars on black background
 
 **Planned but Not Yet Implemented:**
 

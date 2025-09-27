@@ -55,57 +55,69 @@ static inline void role_base_color(device_role_t role, uint8_t *r, uint8_t *g, u
     }
 }
 
-// Render one equalizer frame; color & intensity derive from (fixed) role + beat
+// Render one equalizer frame with colorful rainbow bars on black background
 static void render_equalizer_frame(uint32_t frame)
 {
     const int bars = 12;
-    const int gap = 2;
+    const int gap = 3;
     const int bar_w = (DISPLAY_WIDTH - (bars + 1) * gap) / bars;
 
     // Snapshot shared state once
     float beat_f;
-    device_role_t role;
     xSemaphoreTake(anim_mutex, portMAX_DELAY);
     beat_f = anim_ctx.beat_intensity;
-    role   = anim_ctx.device_role;  // fixed at init
     xSemaphoreGive(anim_mutex);
 
-    // Beat in 0..1000 fixed-point
-    uint32_t base_i = (beat_f <= 0.0f) ? 0u : (beat_f >= 1.0f ? 1000u : (uint32_t)(beat_f * 1000.0f + 0.5f));
-
-    // Base color per role
-    uint8_t base_r, base_g, base_b;
-    role_base_color(role, &base_r, &base_g, &base_b);
+    // Use beat intensity and add baseline activity (20-80% height range)
+    float base_activity = 0.2f + sinf(frame * 0.05f) * 0.1f;  // Gentle wave
+    float effective_beat = base_activity + beat_f * 0.6f;
+    if (effective_beat > 1.0f) effective_beat = 1.0f;
 
     display_begin_frame(DISPLAY_WIDTH, DISPLAY_HEIGHT);
 
     for (int y = 0; y < DISPLAY_HEIGHT; ++y) {
-        // Dark background for EQ (separate from idle blue)
-        uint16_t bg = rgb565(10, 10, 30);
-        for (int x = 0; x < DISPLAY_WIDTH; ++x) scanline_buf[x] = bg;
+        // Pure black background for maximum contrast
+        for (int x = 0; x < DISPLAY_WIDTH; ++x) scanline_buf[x] = 0;
 
         for (int b = 0; b < bars; ++b) {
-            // small variance for motion
-            uint32_t variance_percent = (uint32_t)((b * 37 + (int)frame) % 101);
-            uint32_t multiplier = 500 + (variance_percent * 150) / 100;   // 0.50 .. 0.65
-            uint32_t level_percent = (base_i * multiplier) / 1000;        // 0 .. 650
+            // Create dynamic movement with multiple sine waves
+            float phase1 = sinf((frame * 0.1f) + (b * 0.8f));
+            float phase2 = cosf((frame * 0.07f) + (b * 1.2f));
+            float phase3 = sinf((frame * 0.13f) - (b * 0.5f));
 
-            int height = (int)((level_percent * DISPLAY_HEIGHT) / 1000);
+            // Combine waves for organic movement (30-90% of screen height)
+            float height_factor = 0.3f + (phase1 * 0.2f + phase2 * 0.15f + phase3 * 0.15f) * 0.5f + effective_beat * 0.3f;
+            if (height_factor > 0.9f) height_factor = 0.9f;
+            if (height_factor < 0.1f) height_factor = 0.1f;
+
+            int height = (int)(height_factor * DISPLAY_HEIGHT);
             int bx = gap + b * (bar_w + gap);
             int bar_top = DISPLAY_HEIGHT - height;
 
             if (y >= bar_top) {
-                uint32_t tint_q = 850 + (300 * b) / (bars ? bars : 1);     // 0.85 .. 1.15 (scaled 1000)
-                uint32_t temp   = 350 + (650 * level_percent) / 1000;      // 0.35 .. 1.00 (scaled 1000)
+                // Rainbow colors based on bar position
+                float hue = (float)b / (float)bars * 360.0f + frame * 2.0f;  // Rotate colors
 
-                uint32_t comp_r = (uint32_t)base_r * temp * tint_q / 1000000u;
-                uint32_t comp_g = (uint32_t)base_g * temp * tint_q / 1000000u;
-                uint32_t comp_b = (uint32_t)base_b * temp * tint_q / 1000000u;
-                if (comp_r > 255) comp_r = 255;
-                if (comp_g > 255) comp_g = 255;
-                if (comp_b > 255) comp_b = 255;
+                // Convert HSV to RGB for vibrant colors
+                float h = fmodf(hue, 360.0f) / 60.0f;
+                float x = 1.0f - fabsf(fmodf(h, 2.0f) - 1.0f);
+                float r = 0, g = 0, b = 0;
 
-                uint16_t col = rgb565((uint8_t)comp_r, (uint8_t)comp_g, (uint8_t)comp_b);
+                if (h < 1) { r = 1; g = x; b = 0; }
+                else if (h < 2) { r = x; g = 1; b = 0; }
+                else if (h < 3) { r = 0; g = 1; b = x; }
+                else if (h < 4) { r = 0; g = x; b = 1; }
+                else if (h < 5) { r = x; g = 0; b = 1; }
+                else { r = 1; g = 0; b = x; }
+
+                // Add gradient effect - brighter at bottom
+                float brightness = 0.6f + ((float)(y - bar_top) / (float)height) * 0.4f;
+
+                uint8_t red = (uint8_t)(r * brightness * 255);
+                uint8_t green = (uint8_t)(g * brightness * 255);
+                uint8_t blue = (uint8_t)(b * brightness * 255);
+
+                uint16_t col = rgb565(red, green, blue);
                 for (int px = 0; px < bar_w; ++px) {
                     int x = bx + px;
                     if ((unsigned)x < DISPLAY_WIDTH) scanline_buf[x] = col;
@@ -126,12 +138,14 @@ static void render_equalizer_frame(uint32_t frame)
 static void render_network_status(uint32_t frame)
 {
     // Static variables to track changes and reduce redraws
-    static uint32_t last_full_redraw = 0;
+    static uint32_t last_check_frame = 0;
     static bool device_states[5] = {false, false, false, false, false};
     static bool prev_device_states[5] = {false, false, false, false, false};
+    static bool first_draw = true;
 
-    // Only do full redraw every 2 seconds or on state change
-    bool needs_full_redraw = (frame - last_full_redraw > 50);
+    // Check device states every 10 frames (about 400ms at 25fps)
+    bool check_states = (frame - last_check_frame >= 10) || first_draw;
+    bool needs_full_redraw = first_draw;
 
     // Circle positions in a pentagon pattern
     const int center_x = DISPLAY_WIDTH / 2;
@@ -153,36 +167,41 @@ static void render_network_status(uint32_t frame)
 
     // Get device status
     device_role_t my_role = device_config_get_role();
-    const peer_device_t* peers = espnow_discovery_get_peers();
 
-    // Check current device states
-    for (int i = 0; i < 5; i++) {
-        prev_device_states[i] = device_states[i];
-        if (i == (int)my_role) {
-            device_states[i] = true;
-        } else {
-            device_states[i] = false;
-            for (int p = 0; p < 5; p++) {
-                if (peers[p].is_online && peers[p].role == (device_role_t)i) {
-                    device_states[i] = true;
-                    break;
+    // Only check states when needed
+    if (check_states) {
+        last_check_frame = frame;
+        const peer_device_t* peers = espnow_discovery_get_peers();
+
+        // Check current device states
+        for (int i = 0; i < 5; i++) {
+            prev_device_states[i] = device_states[i];
+            if (i == (int)my_role) {
+                device_states[i] = true;
+            } else {
+                device_states[i] = false;
+                for (int p = 0; p < 5; p++) {
+                    if (peers[p].is_online && peers[p].role == (device_role_t)i) {
+                        device_states[i] = true;
+                        break;
+                    }
                 }
             }
-        }
-        // Check if any state changed
-        if (device_states[i] != prev_device_states[i]) {
-            needs_full_redraw = true;
+            // Check if any state changed
+            if (device_states[i] != prev_device_states[i]) {
+                needs_full_redraw = true;
+            }
         }
     }
 
     // Only redraw if needed
     if (!needs_full_redraw) return;
 
-    last_full_redraw = frame;
+    first_draw = false;
 
-    // Clear screen with dark blue background
+    // Clear screen with pure black background
     display_begin_frame(DISPLAY_WIDTH, DISPLAY_HEIGHT);
-    uint16_t bg_color = rgb565(10, 10, 30);  // Dark blue background
+    uint16_t bg_color = 0;  // Pure black background
 
     for (int y = 0; y < DISPLAY_HEIGHT; ++y) {
         // Fill scanline with background
@@ -199,17 +218,24 @@ static void render_network_status(uint32_t frame)
             uint16_t circle_color;
             uint16_t text_color = rgb565(255, 255, 255);  // White text
 
+            // Add pulsing effect for online devices
+            float pulse = (is_online && i == (int)my_role) ?
+                         0.7f + 0.3f * sinf(frame * 0.1f) :
+                         (is_online ? 0.6f + 0.2f * sinf(frame * 0.08f) : 1.0f);
+
             // Set colors based on device state
             if (i == (int)my_role) {
-                // Our own device - solid green
-                circle_color = rgb565(0, 200, 0);
+                // Our own device - pulsing purple
+                uint8_t intensity = (uint8_t)(200 * pulse);
+                circle_color = rgb565(intensity, 0, intensity);  // Purple
             } else if (is_online) {
-                // Connected peer - solid cyan
-                circle_color = rgb565(0, 150, 150);
+                // Connected peer - pulsing cyan
+                uint8_t intensity = (uint8_t)(150 * pulse);
+                circle_color = rgb565(0, intensity, intensity);
             } else {
-                // Offline device - dark gray
-                circle_color = rgb565(30, 30, 30);
-                text_color = rgb565(100, 100, 100);  // Dimmer text for offline
+                // Offline device - dark gray (no pulse)
+                circle_color = rgb565(20, 20, 20);
+                text_color = rgb565(80, 80, 80);  // Dimmer text for offline
             }
 
             // Check if this scanline intersects with the circle
