@@ -56,6 +56,7 @@ void display_animations_start_playback(song_type_t song_type);
 void display_animations_stop(void);
 void display_animations_set_song_name(const char* name);
 void display_animations_update_beat(float intensity);
+void display_animations_set_song_index(uint8_t index);
 void display_set_brightness(uint8_t brightness);
 
 // Individual animation functions

@@ -30,6 +30,7 @@ static const char *TAG = "DISPLAY_ANIM";
 static animation_context_t anim_ctx;
 static SemaphoreHandle_t anim_mutex = NULL;
 static char current_song_name[64] = "Orchestra M5GO";  // Default text
+static uint8_t current_song_index = 0;  // Currently selected song
 
 // One scanline buffer reused for pushes
 static uint16_t scanline_buf[DISPLAY_WIDTH];
@@ -313,9 +314,13 @@ static void render_network_status(uint32_t frame)
     // Check device states every 10 frames (about 400ms at 25fps)
     bool check_states = (frame - last_check_frame >= 10);
 
+    // Get device role to check if conductor
+    device_role_t my_role = device_config_get_role();
+    bool is_conductor = (my_role == ROLE_CONDUCTOR);
+
     // Circle positions in a pentagon pattern
     const int center_x = DISPLAY_WIDTH / 2;
-    const int center_y = DISPLAY_HEIGHT / 2;
+    const int center_y = DISPLAY_HEIGHT / 2 + (is_conductor ? 10 : 0);  // Shift down if conductor to make room for selector
     const int pattern_radius = 60;  // Distance from center to each circle
     const int circle_radius = 25;  // Fixed radius
 
@@ -333,9 +338,6 @@ static void render_network_status(uint32_t frame)
 
     // Role labels
     const char role_labels[5] = {'C', '1', '2', '3', '4'};
-
-    // Get device status
-    device_role_t my_role = device_config_get_role();
 
     // Only check states when needed
     if (check_states) {
@@ -376,6 +378,47 @@ static void render_network_status(uint32_t frame)
         // Fill scanline with background
         for (int x = 0; x < DISPLAY_WIDTH; ++x) {
             scanline_buf[x] = bg_color;
+        }
+
+        // Draw song selector indicator for conductor only (at top of screen)
+        if (is_conductor && y >= 10 && y < 25) {
+            // Draw 7 small rectangles representing the 7 songs
+            const int selector_width = 30;
+            const int selector_height = 12;
+            const int selector_spacing = 5;
+            const int total_width = 7 * selector_width + 6 * selector_spacing;
+            const int start_x = (DISPLAY_WIDTH - total_width) / 2;
+
+            for (int song = 0; song < 7; song++) {
+                int rect_x = start_x + song * (selector_width + selector_spacing);
+
+                // Draw filled rectangle for selected song, outline for others
+                bool is_selected = (song == current_song_index);
+
+                // Draw the rectangle
+                if (y == 10 || y == 24) {  // Top and bottom border
+                    for (int x = rect_x; x < rect_x + selector_width && x < DISPLAY_WIDTH; x++) {
+                        scanline_buf[x] = is_selected ? rgb565(255, 255, 0) : rgb565(60, 60, 60);
+                    }
+                } else {  // Middle part
+                    // Left and right borders
+                    if (rect_x < DISPLAY_WIDTH) {
+                        scanline_buf[rect_x] = is_selected ? rgb565(255, 255, 0) : rgb565(60, 60, 60);
+                    }
+                    if (rect_x + selector_width - 1 < DISPLAY_WIDTH) {
+                        scanline_buf[rect_x + selector_width - 1] = is_selected ? rgb565(255, 255, 0) : rgb565(60, 60, 60);
+                    }
+
+                    // Fill selected rectangle
+                    if (is_selected) {
+                        for (int x = rect_x + 1; x < rect_x + selector_width - 1 && x < DISPLAY_WIDTH; x++) {
+                            // Animated gradient fill
+                            uint8_t brightness = (uint8_t)(128 + 127 * sinf((frame + x) * 0.1f));
+                            scanline_buf[x] = rgb565(brightness, brightness, 0);
+                        }
+                    }
+                }
+            }
         }
 
         // Draw connection lines between connected devices (before circles)
@@ -631,6 +674,11 @@ void display_animations_set_song_name(const char* name)
         strncpy(current_song_name, name, sizeof(current_song_name) - 1);
         current_song_name[sizeof(current_song_name) - 1] = '\0';
     }
+}
+
+void display_animations_set_song_index(uint8_t index)
+{
+    current_song_index = index;
 }
 
 void display_animations_update_beat(float intensity)

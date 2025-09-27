@@ -94,6 +94,9 @@ void app_main(void)
 
         ESP_LOGI(TAG, "Conductor ready. A=STOP, B=Start/Stop, C=Next song");
 
+        // Set initial song index for the visual selector
+        display_animations_set_song_index(song_index);
+
         while (1) {
             bool left  = btn_read(BTN_LEFT_GPIO);
             bool mid   = btn_read(BTN_MID_GPIO);
@@ -140,6 +143,10 @@ void app_main(void)
             if (right && !prev_right) {
                 song_index = (song_index + 1) % total_songs;
                 ESP_LOGI(TAG, "Selected song %d", song_index);
+
+                // Update the visual song selector
+                display_animations_set_song_index(song_index);
+
                 // If currently playing, restart new selection
                 if (playing) {
                     espnow_broadcast(MSG_SYNC_STOP, 0);
